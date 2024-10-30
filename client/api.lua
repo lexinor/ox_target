@@ -19,10 +19,11 @@ local function typeError(variable, expected, received)
 end
 
 ---Checks options and throws an error on type mismatch
----@param options? OxTargetOption | OxTargetOption[]
+---@param options OxTargetOption | OxTargetOption[]
 ---@return OxTargetOption[]
 local function checkOptions(options)
     local optionsType = type(options)
+
     if optionsType ~= 'table' then
         typeError('options', 'table', optionsType)
     end
@@ -35,7 +36,7 @@ local function checkOptions(options)
         typeError('options', 'array', ('%s table'):format(tableType))
     end
 
-    return options --[[ @as OxTargetOption[] ]]
+    return options
 end
 
 ---@param data OxTargetPolyZone | table
@@ -66,6 +67,20 @@ function api.addSphereZone(data)
     data.resource = GetInvokingResource()
     data.options = checkOptions(data.options)
     return lib.zones.sphere(data).id
+end
+
+---@param id number | string The ID of the zone to check. It can be either a number or a string representing the zone's index or name, respectively.
+---@return boolean returns true if the zone with the specified ID exists, otherwise false.
+function api.zoneExists(id)
+    if not Zones or (type(id) ~= 'number' and type(id) ~= 'string') then return false end
+
+    if type(id) == 'number' and Zones[id] then return true end
+
+    for key, zone in pairs(Zones) do
+        if type(id) == 'string' and zone.name == id then return true end
+    end
+
+    return false
 end
 
 ---@param id number | string
@@ -412,32 +427,84 @@ end)
 local NetworkGetEntityIsNetworked = NetworkGetEntityIsNetworked
 local NetworkGetNetworkIdFromEntity = NetworkGetNetworkIdFromEntity
 
----@param entity number
----@param _type number
----@param model number
----@return table
-function api.getEntityOptions(entity, _type, model)
-    if _type == 1 then
-        if IsPedAPlayer(entity) then
-            return {
-                global = players
-            }
-        end
+---@class OxTargetOptions
+local options_mt = {}
+options_mt.__index = options_mt
+options_mt.size = 1
+
+function options_mt:wipe()
+    options_mt.size = 1
+    self.globalTarget = nil
+    self.model = nil
+    self.entity = nil
+    self.localEntity = nil
+
+    if self.__global[1]?.name == 'builtin:goback' then
+        table.remove(self.__global, 1)
+    end
+end
+
+---@param entity? number
+---@param _type? number
+---@param model? number
+function options_mt:set(entity, _type, model)
+    if not entity then return end
+
+    if _type == 1 and IsPedAPlayer(entity) then
+        self:wipe()
+        self.globalTarget = players
+        options_mt.size += 1
+
+        return
     end
 
     local netId = NetworkGetEntityIsNetworked(entity) and NetworkGetNetworkIdFromEntity(entity)
-    local global
 
-    if _type == 1 then
-        global = peds
-    elseif _type == 2 then
-        global = vehicles
-    else
-        global = objects
+    self.globalTarget = _type == 1 and peds or _type == 2 and vehicles or objects
+    self.model = models[model]
+    self.entity = netId and entities[netId] or nil
+    self.localEntity = localEntities[entity]
+    options_mt.size += 1
+
+    if self.model then options_mt.size += 1 end
+    if self.entity then options_mt.size += 1 end
+    if self.localEntity then options_mt.size += 1 end
+end
+
+---@type OxTargetOption[]
+local global = {}
+
+---@param options OxTargetOption | OxTargetOption[]
+function api.addGlobalOption(options)
+    addTarget(global, options, GetInvokingResource())
+end
+
+---@param options string | string[]
+function api.removeGlobalOption(options)
+    removeTarget(global, options, GetInvokingResource())
+end
+
+---@class OxTargetOptions
+local options = setmetatable({
+    __global = global
+}, options_mt)
+
+---@param entity? number
+---@param _type? number
+---@param model? number
+function api.getTargetOptions(entity, _type, model)
+    if not entity then return options end
+
+    if IsPedAPlayer(entity) then
+        return {
+            global = players,
+        }
     end
 
+    local netId = NetworkGetEntityIsNetworked(entity) and NetworkGetNetworkIdFromEntity(entity)
+
     return {
-        global = global,
+        global = _type == 1 and peds or _type == 2 and vehicles or objects,
         model = models[model],
         entity = netId and entities[netId] or nil,
         localEntity = localEntities[entity],
@@ -452,6 +519,10 @@ function api.disableTargeting(value)
     end
 
     state.setDisabled(value)
+end
+
+function api.isActive()
+    return state.isActive()
 end
 
 return api
